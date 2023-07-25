@@ -1,0 +1,9 @@
+# note: time should be > 0.
+# time, job_size, deadline_length
+1,8,4
+1,8,4
+1,8,8
+1,4,16
+1,4,20
+1,4,24
+1,4,28
