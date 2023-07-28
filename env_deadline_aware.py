@@ -93,7 +93,7 @@ def count_vacant(state):
             cnt += 1
     # if cnt == size:
     #     cnt -= 1
-    return cnt
+    return cnt, size
 
 def convert_obs_to_state(observation):
     state = []

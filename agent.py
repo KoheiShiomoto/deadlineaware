@@ -59,13 +59,17 @@ def select_action_RLAC(model, state, device):
 # テストのための行動選択関数
 # Actor の最大確率の行動を選択
 def select_action_valid_RLAC(model, state, device):
-    vacant = count_vacant(state)
+    vacant, nact = count_vacant(state)
     state = np.array(state, dtype=float).flatten()
     with torch.no_grad():
         state = torch.from_numpy(state).float()
         probs, state_value = model(state.to(device))
     probs[-vacant:] = 0.0
-    return probs.argmax().item(), state_value
+    if vacant == nact:
+        idx = -1
+    else:
+        idx = probs.argmax().item()
+    return idx, state_value
 
 
 def learn_model(model, gamma, optimizer, device):
