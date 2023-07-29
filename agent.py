@@ -177,8 +177,8 @@ class Agent_AC():
             observation,_ = self.env.reset()
             episode_reward = 0
             terminated = False
-            # while terminated == False :
-            for t in range(self.tmax):
+            while terminated == False :
+            # for t in range(self.tmax):
                 if self.algorithm == "AC":
                     state, _ = convert_obs_to_state(observation)
                     idx, _ = select_action_RLAC(model=model, state=state, device=device)
