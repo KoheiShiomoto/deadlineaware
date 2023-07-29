@@ -48,7 +48,6 @@ def select_action_RLAC(model, state, device):
     m = Categorical(probs)
     action = m.sample()
     model.saved_actions.append((m.log_prob(action), state_value))
-
     return action.item(), state_value
 
 # テストのための行動選択関数
