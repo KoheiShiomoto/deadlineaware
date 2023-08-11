@@ -18,7 +18,7 @@ class Job():
         """
         self.arrival_time = arrival_time # 到着時刻
         self.deadline_length = deadline_length # デッドラインの長さ
-        self.deadline = arrival_time+deadline_length # デッドライン時間（絶対時刻）
+        self.deadline = arrival_time+deadline_length+1 # デッドライン時間（絶対時刻）に1を加える　必ず1スロットは待つため
         self.job_size = job_size # ジョブサイズ（到着時のもの）
         self.job_size_remain = job_size # ジョブの残りのサイズ
 
