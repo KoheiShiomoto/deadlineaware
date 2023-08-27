@@ -14,6 +14,7 @@ def select_job_EDF(observation):
             selected_index = index
     return selected_index
 
+
 def select_job_FCFS(observation):
     if len(observation) == 0:
         return -1

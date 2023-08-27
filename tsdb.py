@@ -1,6 +1,7 @@
 import argparse
-import matplotlib.pyplot as plt
 import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 
 class EvalBusyPeriod():
     def __init__(self,
@@ -20,7 +21,7 @@ class EvalBusyPeriod():
         completed_job_size = info["completed_job_size"]
         completed_job_num = info["completed_job_num"]
         qlen = info["qlen"]
-        print(f"time:{time}, job_size:{completed_job_size}, job_num:{completed_job_num}, qlen:{qlen}")
+        # print(f"time:{time}, job_size:{completed_job_size}, job_num:{completed_job_num}, qlen:{qlen}")
         self.sum_reward += reward
         self.sum_completed_job_size += completed_job_size
         self.sum_completed_job_num += completed_job_num
@@ -38,12 +39,73 @@ class EvalBusyPeriod():
             self.is_busy = False
              
     def to_csv(self):
-        df = pd.DataFrame(self.list_busy_period,
+        self.df = pd.DataFrame(self.list_busy_period,
                   columns=['time_start', 'time_end', 'perf', 'reward', 'duty','num_job'])
 
-        print(df)
-        df.to_csv(self.ofileName_base+"_eval_busy_period.csv")
+        self.df['bp_len'] = self.df['time_end'] - self.df['time_start']
+        # print(self.df)
+        self.df.to_csv(self.ofileName_base+"_eval_busy_period.csv")
 
+    def from_csv(self,
+                 perf_thresh=1.0):
+        """
+        csvファイルからperfが閾値以下のBusy periodのみを読み出し、Busy periodのリストを返す
+        Args: perf_thresh: threshold for perf
+        Returns: None
+        """
+        df = pd.read_csv(self.ofileName_base+"_eval_busy_period.csv")
+        self.df = df[df['perf'] <= perf_thresh]
+        t0_list = self.df['time_start'].values.tolist()
+        t1_list = self.df['time_end'].values.tolist()
+        bp_list = []
+        for t0, t1 in zip(t0_list, t1_list):
+            bp_list.append([t0, t1])
+        return bp_list
+
+    def plot(self):
+        x = self.df['bp_len'].to_numpy()
+        y = self.df['perf'].to_numpy()
+        #
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        H = ax.scatter(x, y)
+        ax.set_xlabel('busy period length')
+        ax.set_ylabel('perf')
+        plt.savefig(self.ofileName_base+"_eval_busy_period_scatter.pdf")
+        plt.show()
+        #
+        x = self.df['bp_len'].to_numpy()
+        y = self.df['num_job'].to_numpy()
+        z = self.df['perf'].to_numpy()
+        #
+        fig = plt.figure()
+        ax = fig.add_subplot(111,projection='3d')
+        H = ax.scatter(x, y, z)
+        ax.set_xlabel('busy period length')
+        ax.set_ylabel('number of jobs')
+        ax.set_zlabel('perf')
+        plt.savefig(self.ofileName_base+"_eval_busy_period_scatter3d.pdf")
+        plt.show()
+        #
+        x = self.df['perf'].to_numpy()
+        y = self.df['duty'].to_numpy()
+        #
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        H = ax.hist(x, bins=10)
+        ax.set_xlabel('perf')
+        ax.set_ylabel('counts')
+        plt.savefig(self.ofileName_base+"_eval_busy_period_hstgrm.pdf")
+        plt.show()
+        #
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        H = ax.hist2d(x,y, bins=[40,10], cmap=cm.jet)
+        ax.set_xlabel('perf')
+        ax.set_ylabel('duty')
+        fig.colorbar(H[3],ax=ax)
+        plt.savefig(self.ofileName_base+"_eval_busy_period_heatmap.pdf")
+        plt.show()
 
 class TsDatabase():
     def __init__(self,
