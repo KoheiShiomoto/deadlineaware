@@ -31,13 +31,14 @@ class Agent():
                  env,
                  seed,
                  #
-                 pjName):
+                 pjName,
+                 tmax):
         #
         self.env = env
         self.seed = seed
         #
         self.pjName = pjName
-        self.tmax = env.get_tmax()
+        self.tmax = tmax
         # 実験の際にできた結果ファイルを保存するためのディレクトリを作成
         self.output_dir_path = Path('output')
         if not self.output_dir_path.exists():
@@ -46,8 +47,8 @@ class Agent():
         return
                  
     def test(self):
-        ntick = 1000
-        tick = int(math.ceil(self.tmax/ntick))
+        ntick = 10
+        tick = int(self.tmax/ntick)
         observation,_ = self.env.reset()
         nact = self.env.get_nact()
         state, num_state_elem = convert_obs_to_state(observation)
@@ -61,10 +62,9 @@ class Agent():
             observation, reward, terminated, truncated, info = self.env.step(action=idx)
             self.eval_busyperiod.step(reward, info)
             episode_reward += reward
+            logger.add([("AccumReward",episode_reward)])
             time, num_jobs, qlen = self.env.get_status()
-            if t % tick == 0:
-                logger.add([("AccumReward",episode_reward)])
-                logger.add([("time",time),("num_jobs",num_jobs),("qlen",qlen)])
+            logger.add([("time",time),("num_jobs",num_jobs),("qlen",qlen)])
             if terminated:
                 break
         #
@@ -78,11 +78,13 @@ class Agent_EDF(Agent):
                  env,
                  seed,
                  #
-                 pjName):
+                 pjName,
+                 tmax):
         #
         super().__init__(env = env,
                          seed = seed,
-                         pjName = pjName)
+                         pjName = pjName,
+                         tmax = tmax)
 
     def select_job(self,
                    observation):
@@ -106,11 +108,13 @@ class Agent_FCFS(Agent):
                  env,
                  seed,
                  #
-                 pjName):
+                 pjName,
+                 tmax):
         #
         super().__init__(env = env,
                          seed = seed,
-                         pjName = pjName)
+                         pjName = pjName,
+                         tmax = tmax)
 
     def select_job(self,
                    observation):
@@ -166,6 +170,7 @@ class Policy(nn.Module):
 class Agent_RL(Agent):
     def __init__(self,
                  env,
+                 tmax,
                  seed,
                  pjName,
                  #
@@ -174,7 +179,8 @@ class Agent_RL(Agent):
                  lr = 1.0e-5):
         super().__init__(env = env,
                          seed = seed,
-                         pjName = pjName)
+                         pjName = pjName,
+                         tmax = tmax)
         # 以下、強化学習Agentに必要な設定
         self.modelName = modelName
         self.gamma = gamma
@@ -215,8 +221,8 @@ class Agent_RL(Agent):
         return loss
 
     def test(self):
-        ntick = 1000
-        tick = int(math.ceil(self.tmax/ntick))
+        ntick = 10
+        tick = int(self.tmax/ntick)
         #
         observation,_ = self.env.reset()
         nact = self.env.get_nact()
@@ -243,10 +249,9 @@ class Agent_RL(Agent):
             self.eval_busyperiod.step(reward, info)
 
             episode_reward += reward
+            logger.add([("AccumReward",episode_reward)])
             time, num_jobs, qlen = self.env.get_status()
-            if t % tick == 0:
-                logger.add([("AccumReward",episode_reward)])
-                logger.add([("time",time),("num_jobs",num_jobs),("qlen",qlen)])
+            logger.add([("time",time),("num_jobs",num_jobs),("qlen",qlen)])
             if terminated:
                 break
         #
@@ -258,8 +263,8 @@ class Agent_RL(Agent):
 
     def train(self,
               num_episodes):
-        ntick = 1000
-        tick = int(math.ceil(self.tmax/ntick))
+        ntick = 10
+        tick = int(self.tmax/ntick)
         torch.manual_seed(self.seed)
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         observation,_ = self.env.reset()
@@ -276,8 +281,8 @@ class Agent_RL(Agent):
             observation,_ = self.env.reset()
             episode_reward = 0
             terminated = False
-            # for t in range(self.tmax):
             while terminated == False :
+            # for t in range(self.tmax):
                 state, _ = convert_obs_to_state(observation)
                 idx, _ = self.select_action(model=model, state=state, device=device)
                 observation, reward, terminated, truncated, info = self.env.step(action=idx)
@@ -287,14 +292,13 @@ class Agent_RL(Agent):
                     break
             loss = self.learn_model(model=model, gamma=self.gamma, optimizer=optimizer, device=device)
             loss = loss.detach().item()
-            if episode % tick == 0:
-                reward_result.append(episode_reward)
-                loss_result.append(loss)
+            reward_result.append(episode_reward)
+            loss_result.append(loss)
         #
         model = model.to('cpu')
         torch.save(model.state_dict(), self.model_dir_path.joinpath(f'ac_model_{self.pjName}.pth'))
         result = pd.DataFrame({
-            'episode': np.arange(tick, tick*(len(reward_result) + 1), tick),
+            'episode': np.arange(1, len(reward_result) + 1),
             'reward': reward_result,
             'loss': loss_result
         })
@@ -364,6 +368,7 @@ class Agent_RL(Agent):
 class Agent_AC(Agent_RL):
     def __init__(self,
                  env,
+                 tmax,
                  seed,
                  pjName,
                  #
@@ -372,6 +377,7 @@ class Agent_AC(Agent_RL):
                  lr = 1.0e-5):
         #
         super().__init__(env = env,
+                         tmax = tmax,
                          seed = seed,
                          pjName = pjName,
                          #

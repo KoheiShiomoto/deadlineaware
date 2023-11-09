@@ -8,7 +8,7 @@ from pathlib import Path
 import argparse
 import pickle
 
-from jobset import get_list_job_info, Job, SelfJobSet, TraceJobSet, DrillJobSet
+from jobsetKS import get_list_job_info, Job, SelfJobSet, TraceJobSet, DrillJobSet
 from tsdb import EvalBusyPeriod
 from env_deadline_aware import EnvDeadlineAware
 from agent import Agent_AC, Agent_EDF, Agent_FCFS
@@ -34,7 +34,7 @@ if __name__ == '__main__':
     parser.add_argument('-e','--tmax',type=int, default=500, help='tmax, episode length (default: 500)')  
     parser.add_argument('-s','--seed',type=int, default=0, help='seed (default: 0)')  
     parser.add_argument('-na','--nact',type=int, default=8, help='Nact (default: 8)')  
-    parser.add_argument('-m','--mu',type=float, default=10.0, help='mu, decay factor of reward (default: 10.0)')  # 報酬計算の減衰係数 exp(-mu*delay) gamma=1.0 (Sagisaka2022)
+    parser.add_argument('-m','--mu',type=float, default=1.0, help='mu, decay factor of reward (default: 1.0)')  # 報酬計算の減衰係数 exp(-mu*delay) gamma=1.0 (Sagisaka2022)
     parser.add_argument('-l','--lambda_',type=float, default=0.08, help='lambda, arrival rate per slot (default:0.08)')  # ポアソン過程のパラメータ（1スロットに到着するジョブ数を決める）
     parser.add_argument('-al','--alpha',type=float, default=2.0, help='alpha, defining the deadline by k-times of data size (default: 2.0)')  # 平均デッドライン長
     parser.add_argument('-bt','--beta',type=float, default=10.0, help='beta, defining the job size (default: 10.0')  # 平均ジョブサイズ
@@ -89,9 +89,10 @@ if __name__ == '__main__':
 
     # 最初にここでJobSetを作っておく
     if isTraceJobSet == True: # 固定
-        jobset = TraceJobSet(f_name = inputFileName,
+        jobset = TraceJobSet(tmax = tmax,
+                             f_name = inputFileName,
                              n_iter = n_iter)
-    elif isDrillJobSet == True: # EDFではうまくできないBusy Periodを集めたパターン
+    elif isDrillJobSet == True: # EDFではうまくできないBusy Periodをあつめたぱたーん
         eval_busyperiod = EvalBusyPeriod(ofileName_base = ofileName_base)
         with open(pkl_fname, 'rb') as p:
             loaded_jobset = pickle.load(p)
@@ -112,7 +113,6 @@ if __name__ == '__main__':
         with open(pkl_fname, 'wb') as p:
             pickle.dump(jobset, p)
 
-    # jobset.show_config()
     #
 
     env = EnvDeadlineAware(seed = seed,

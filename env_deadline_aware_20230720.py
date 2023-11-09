@@ -19,17 +19,80 @@
 # RenderFrame = TypeVar("RenderFrame")
 
 
+import numpy as np
 import math
+import random
 import copy
-from pathlib import Path
+import csv
 
-from jobset import get_list_job_info, Job
+from common.tools import decomment
+
+class Job():
+    def __init__(self,
+                 arrival_time = -1,
+                 deadline_length = 0,
+                 job_size = 0): # 初期値はダミーデータ[arrival_time, deadline_length, job_size] = [-1,0,0]
+        """
+        Args:
+
+        Returns:
+        """
+        self.arrival_time = arrival_time # 到着時刻
+        self.deadline_length = deadline_length # デッドラインの長さ
+        self.deadline = arrival_time+deadline_length # デッドライン時間（絶対時刻）
+        self.job_size = job_size # ジョブサイズ（到着時のもの）
+        self.job_size_remain = job_size # ジョブの残りのサイズ
+
+    def turn_dummy(self): # ダミーデータ[arrival_time, deadline_length, job_size] = [-1,0,0]　にセットする
+        self.arrival_time = -1 # 到着時刻
+        self.deadline_length = 0 # デッドラインの長さ
+        self.deadline = -1 # デッドライン時間（絶対時刻）
+        self.job_size = 0 # ジョブサイズ（到着時のもの）
+        self.job_size_remain = 0 # ジョブの残りのサイズ
+        return
+
+    def show(self):
+        print(f"# arrival_time:{arrival_time}, deadline_length:{self.deadline_length}, deadline:{self.deadline}, job_size:{self.job_size}, job_size_remain:{self.job_size_remain}")
+        return
+
+    def get_job_info(self):
+        return self.arrival_time, self.deadline_length, self.deadline, self.job_size, self.job_size_remain
+    
+    def step(self,
+             served,
+             time):
+        """
+        1ステップ進めるときの更新処理
+        servedはbool型で選択されたジョブの場合はTrueでそれ以外はFalse
+        delayとdoneを返す
+        Args:
+
+        Returns:
+        """
+        if served == True:
+            self.job_size_remain -= 1.0
+        if self.job_size_remain <= 0:
+            delay = max(time-self.deadline,0.0)
+            done = True
+        else:
+            delay = 0
+            done = False
+        return delay, self.deadline_length, self.job_size, done
 
 def show_job_queue(job_queue):
     for item in job_queue:
         arrival_time, deadline_length, deadline, job_size, job_size_remain = item.get_job_info()
         print(f"# arrival_time:{arrival_time}, deadline_length:{deadline_length}, deadline:{deadline}, job_size:{job_size}, job_size_remain:{job_size_remain}")
     return 
+
+def get_list_job_info(list_jobs):
+    sum_job_size = 0
+    sum_job_size_remain = 0
+    for item in list_jobs:
+        _, _, _, job_size, job_size_remain = item.get_job_info()
+        sum_job_size += job_size
+        sum_job_size_remain += job_size_remain
+    return sum_job_size, sum_job_size_remain
 
 
 def clip(value):
@@ -50,7 +113,7 @@ def count_vacant(state):
             cnt += 1
     # if cnt == size:
     #     cnt -= 1
-    return cnt, size
+    return cnt
 
 def convert_obs_to_state(observation):
     state = []
@@ -103,29 +166,284 @@ def make_observation(list_jobs, time):
         sum_job_size_remain += job_size_remain
         observation.append(l)
     return observation, num_obs_elem, num_jobs, sum_job_size_remain
+    
 
+class ArrivalProcess():
+    def __init__(self,
+                 seed = 0,
+                 lambda_ = 0.08,
+                 alpha = 2.0,
+                 beta = 10.0):
+        self.seed = seed # 乱数の種を変更できるようにする
+        np.random.seed(seed) # ポアソン分布疑似乱数モジュールを持つnpのシードの設定はこちら
+        random.seed(seed) # これは不要か？
+        self.lambda_ = lambda_ # ポアソン過程のパラメータ（1スロットに到着するジョブ数を決める）
+        self.alpha = alpha # 平均デッドライン長 ジョブサイズの係数倍
+        self.beta = beta # 平均ジョブサイズ
+
+    def genJob(self,
+               time):
+        """
+        1スロットに生成したジョブのリストを返す．
+        Args:
+
+        Returns:
+        """
+        slot = 1
+        n = np.random.poisson(self.lambda_,slot)
+        list_jobs = []
+        for i in range(int(n)):
+            # job_size = self.beta # ジョブ長は乱数で決める
+            job_size = int(np.random.exponential(1.0*self.beta)) # ジョブ長は乱数で決める
+            deadline_length = int(job_size * random.uniform(1, self.alpha)) # ジョブ長が決まったら、デッドラインをk倍(k>1)とする kは乱数でもよい
+            job = Job(arrival_time=time,
+                      deadline_length=deadline_length,
+                      job_size=job_size)
+            list_jobs.append(job)
+        return list_jobs
+
+class JobSet():
+    def __init__(self,
+                 tmax,
+                 seed = 0,
+                 isStream = True,
+                 lambda_ = 0.08,
+                 alpha = 2.0,
+                 beta = 10.0):
+        """
+        指定されたパラメータでジョブの到着予定表を生成する
+        時刻0で最初のジョブが到着したパターンを生成する
+        Busy Periodが終了するか、時間切れtmaxに到達するまでのパターンを作成する
+        Args:
+
+        Returns:
+        """
+        self.isStream = isStream
+        self.lambda_ = lambda_ # ポアソン過程のパラメータ（1スロットに到着するジョブ数を決める）
+        self.alpha = alpha # 平均デッドライン長 ジョブサイズの係数倍
+        self.beta = beta # 平均ジョブサイズ
+        #
+        self.tmax = tmax
+        self.time = 0
+        self.seed = seed
+        self.calender = []
+        self.arrival_process = ArrivalProcess(seed = self.seed,
+                                              lambda_ = self.lambda_,
+                                              alpha = self.alpha,
+                                              beta = self.beta)
+        self.configure() # 
+        #
+        self.time = 0
+        self.qlen = 0
+
+    def get_tmax(self):
+        return self.tmax
+    
+
+    def configure(self):
+        """
+        時刻0で最初のジョブが到着したパターンを生成する
+        Busy Periodが終了するか、時間切れtmaxに到達するまでのパターンを作成する
+        仕事量保存則が成り立つ前提でFIFOでサービスした場合のBusy Periodを作成
+        Args:
+
+        Returns:
+        """
+        isFirst = True
+        time = 0
+        self.qlen = 0
+        while time < self.tmax:
+            list_arriving_jobs = self.arrival_process.genJob(time=time)
+            if len(list_arriving_jobs) != 0 and isFirst == True:
+                isFirst = False
+            if isFirst == False:
+                arriving_job_size,_ = get_list_job_info(list_arriving_jobs)
+                self.qlen += arriving_job_size-1
+                self.qlen = max(self.qlen,0)
+                # if ((self.qlen == 0) and (self.isStream == False)) or time == self.tmax-1:
+                if (self.qlen == 0) and (self.isStream == False) :
+                    self.tmax = time+1
+                    break
+                self.calender.append(list_arriving_jobs)
+                time += 1
+        return
+
+    def step(self):
+        """
+        1ステップ進める。時計も進める。
+        Args:
+
+        Returns:
+        """
+        if self.time < self.tmax:
+            list_arriving_jobs = self.calender[self.time]
+        else:
+            list_arriving_jobs = []
+        self.time += 1
+        return list_arriving_jobs
+    
+
+
+    def reset(self):
+        """
+        同じサンプルパスで最初からジョブを生成する
+        Args:
+
+        Returns:
+         """
+        self.time = 0
+        #
+        self.calender = []
+        self.arrival_process = ArrivalProcess(seed = self.seed,
+                                              lambda_ = self.lambda_,
+                                              alpha = self.alpha,
+                                              beta = self.beta)
+        self.configure() # 
+        #
+        return
+
+    def show_config(self):
+        print("----------------------------")
+        print(f"tmax={self.tmax}, time={self.time}")
+        print("calender")
+        for time, list_arricing_jobs in enumerate(self.calender):
+            print(f"time:{time}")
+            for item in list_arricing_jobs:
+                arrival_time, deadline_length, deadline, job_size, job_size_remain = item.get_job_info()
+                print(f"# arrival_time:{arrival_time}, deadline_length:{deadline_length}, deadline:{deadline}, job_size:{job_size}, job_size_remain:{job_size_remain}")
+            
+        
+        
+
+class TraceJobSet():
+    def __init__(self,
+                 tmax,
+                 f_name):
+        """
+        指定されたファイルからジョブのパターンを読み込む
+        Args:
+
+        Returns:
+        """
+        #
+        self.tmax = tmax
+        self.f_name = f_name
+        self.calender = []
+        for i in range(self.tmax):
+            self.calender.append([])
+        self.configure() # 
+
+    def get_tmax(self):
+        return self.tmax
+       
+    def configure(self):
+        """
+        Args:
+
+        Returns:
+        """
+        # # time, job_size, deadline_length
+        # 0,2,3
+        # ...
+        with open(self.f_name) as f:
+            reader = csv.reader(decomment(f))
+            for row in reader:
+                time = int(row[0])
+                job_size = int(row[1])
+                deadline_length = int(row[2])
+                # print(row[0],row[1],row[2])
+                job = Job(arrival_time = time,
+                          deadline_length = deadline_length,
+                          job_size = job_size)
+                self.calender[time].append(job)
+        return
+
+    def step(self):
+        """
+        1ステップ進める。時計も進める。
+        Args:
+
+        Returns:
+        """
+        if self.time < self.tmax:
+            list_arriving_jobs = self.calender[self.time]
+        else:
+            list_arriving_jobs = []
+        self.time += 1
+        return list_arriving_jobs
+
+    def reset(self):
+        """
+        同じサンプルパスで最初からジョブを生成する
+        Args:
+
+        Returns:
+         """
+        self.time = 0
+        #
+        self.calender = []
+        for t in range(self.tmax):
+            self.calender.append([])
+        self.configure() # 
+        # 
+        # 同じ時間に到着するジョブの並び順番をランダムに変える
+        #  -> 固定パターンのままだと過学習が起きて性能が劣化したと記憶しているが、あとで試すと劣化しなかった?
+        for t in range(self.tmax):
+            random.shuffle(self.calender[t])
+        #
+        return
+    
+    def show_config(self):
+        print("----------------------------")
+        print(f"tmax={self.tmax}, time={self.time}")
+        print("calender")
+        for time, list_arricing_jobs in enumerate(self.calender):
+            print(f"time:{time}")
+            for item in list_arricing_jobs:
+                arrival_time, deadline_length, deadline, job_size, job_size_remain = item.get_job_info()
+                print(f"# arrival_time:{arrival_time}, deadline_length:{deadline_length}, deadline:{deadline}, job_size:{job_size}, job_size_remain:{job_size_remain}")
 
 class EnvDeadlineAware():
     def __init__(self,
-                 jobset,
+                 isStream = True,
+                 isTraceJobSet = False,
+                 f_name = "data_jobset.txt",
+                 tmax = 300,
                  seed = 0,
                  nact = 8,
-                 mu = 1.0): 
+                 mu = 1.0,
+                 lambda_ = 0.08,
+                 beta = 10.0,
+                 alpha = 2.0):
         """
         Args:
-        num_bpは1000000以上の値にしておくと全てを選択する仕様
-        nrepはDrillパターンをデフォルトで10000回行う
+
         Returns:
         """
-
+        self.isStream = isStream
+        self.f_name = f_name
+        self.tmax = tmax # 時計の最大値
         self.time = 0 # 時計の初期化
         self.seed = seed # 乱数の種
-        self.mu = mu # 報酬計算のための減衰係数 exp(-mu*delay)
         self.nact = nact # ニューラルネットに状態として与えることができるジョブ数の最大値
+        self.mu = mu # 報酬計算のための減衰係数 exp(-mu*delay)
+        self.lambda_ = lambda_ # ポアソン過程のパラメータ（1スロットに到着するジョブ数を決める）
+        self.beta = beta # 平均ジョブサイズ
+        self.alpha = alpha # 平均デッドライン長
         #
         self.job_queue = [] # 現在、処理を待っているジョブの待ち行列
-        self.jobset = jobset
-        self.jobset.reset()
+        # 最初にここでJobSetを作っておく
+
+        if isTraceJobSet == True:
+            self.jobset = TraceJobSet(tmax = self.tmax,
+                                      f_name = self.f_name)
+        else:
+            self.jobset = JobSet(tmax = self.tmax,
+                                 seed = self.seed,
+                                 isStream = self.isStream,
+                                 lambda_ = self.lambda_,
+                                 alpha = self.alpha,
+                                 beta = self.beta)
         #
         self.time = 0
         self.tmax = self.jobset.get_tmax()
@@ -140,11 +458,7 @@ class EnvDeadlineAware():
             for i in range(self.nact-len(self.job_queue)):
                 nact_job_queue.append(dummy_job)
         observation, self.num_obs_elem, _, _ = make_observation(list_jobs = nact_job_queue, time = self.time)
-
-    def get_tmax(self):
-        return self.jobset.get_tmax()
-    
-
+        
     # def step(self,action):
     # # 1ステップ進めるときの更新処理．actionは選択されたジョブを指す．ジョブの到着処理もここで行う？
     #     return state, reward, done, 
@@ -251,22 +565,8 @@ class EnvDeadlineAware():
             if len(self.job_queue) <= 0:
                 terminated = True
                 truncated = True
-            else: # busy periodを超えてもジョブが残っている場合
-                # # 負の報酬を計算　まだ残っているジョブの大きさ
-                # _, remain_job_size = get_list_job_info(self.job_queue)
-                # reward -= remain_job_size
-                # # 負の報酬を計算　デッドラインを超えていたらそれも加算
-                # for i in range(len(self.job_queue)): # 待ち行列にいるジョブについて処理をする
-                #     ######################  次の行でjobクラスのstepメソッドでは時計は進まないので問題なし
-                #     delay, deadline_length, job_size, done = self.job_queue[i].step(served=False,time=self.time)
-                #     reward_i = job_size * (1-math.exp(-self.mu*delay)) # 終了したジョブの即時報酬を計算する ジョブ長を考慮した改良版
-                #     reward -= reward_i
-                # #
-                # # print(f"tmax is extend. Reward: {reward}, {len(self.job_queue)} jobs are still in the queue.")
-                if self.time >= 2*self.tmax: # busy periodの2倍を超えてもジョブが残っていれば、episodeを終了させる
-                    terminated = True
-                    truncated = True
-
+            # else:
+            #     print(f"tmax is extend. Reward: {reward}, {len(self.job_queue)} jobs are still in the queue.")
         #
         return observation, reward, terminated, truncated, info
 
@@ -314,9 +614,6 @@ class EnvDeadlineAware():
         #
         # JobSetをはじめに戻す
         self.jobset.reset()
-
-        # self.jobset.show_config()
-
         self.time = 0
         self.tmax = self.jobset.get_tmax()
         self.qlen = 0
@@ -394,13 +691,3 @@ class EnvDeadlineAware():
         for item in self.job_queue:
             arrival_time, deadline_length, deadline, job_size, job_size_remain = item.get_job_info()
             print(f"# arrival_time:{arrival_time}, deadline_length:{deadline_length}, deadline:{deadline}, job_size:{job_size}, job_size_remain:{job_size_remain}")
-
-
-    def sample(self,
-               t0, t1):
-        """
-        Busy periodのジョブセットを取り出す
-        Args: starting time t0, end time t1-1
-        Returns: a subset of the jobset
-        """
-        return self.jobset.sample(t0,t1)

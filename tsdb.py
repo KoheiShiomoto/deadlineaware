@@ -3,6 +3,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
+import numpy as np
+from operator import itemgetter
+
 class EvalBusyPeriod():
     def __init__(self,
                  ofileName_base):
@@ -46,22 +49,67 @@ class EvalBusyPeriod():
         # print(self.df)
         self.df.to_csv(self.ofileName_base+"_eval_busy_period.csv")
 
+    #
+    # 2023-09-07
+    # def from_csv(self,
+    #              perf_thresh=1.0):
+    #     """
+    #     csvファイルからperfが閾値以下のBusy periodのみを読み出し、Busy periodのリストを返す
+    #     Args: perf_thresh: threshold for perf
+    #     Returns: None
+    #     """
+    #     df = pd.read_csv(self.ofileName_base+"_eval_busy_period.csv")
+    #     self.df = df[df['perf'] <= perf_thresh]
+    #     t0_list = self.df['time_start'].values.tolist()
+    #     t1_list = self.df['time_end'].values.tolist()
+    #     bp_list = []
+    #     for t0, t1 in zip(t0_list, t1_list):
+    #         bp_list.append([t0, t1])
+    #     return bp_list
     def from_csv(self,
-                 perf_thresh=1.0):
+                 perf_thresh=1.0,
+                 sample_size=1000000):
         """
         csvファイルからperfが閾値以下のBusy periodのみを読み出し、Busy periodのリストを返す
-        Args: perf_thresh: threshold for perf
+        Busy period数は固定する
+        Args: 
+           perf_thresh: perf threshold to sample busy periods
+           sample_size: number of sampled busy periods
         Returns: None
         """
         df = pd.read_csv(self.ofileName_base+"_eval_busy_period.csv")
+        #
+        # 2023-10-15 perfの昇順で（性能の悪い順番で）DFをソート
+        df = df.sort_values('perf', ascending=True) # perfの昇順でDFをソート
+        # 2023-10-15
+        #
         self.df = df[df['perf'] <= perf_thresh]
-        t0_list = self.df['time_start'].values.tolist()
-        t1_list = self.df['time_end'].values.tolist()
+        t0_list_base = self.df['time_start'].values.tolist()
+        t1_list_base = self.df['time_end'].values.tolist()
+        perf_list_base = self.df['perf'].values.tolist()
+        reward_list_base = self.df['reward'].values.tolist()
+        #
+        # 2023-09-07
+        data_size = len(t0_list_base)
+        if sample_size >= 1000000:
+            sample_size = data_size
+        assert data_size >= sample_size
+        shuffled_idx = np.random.choice(np.arange(data_size), sample_size, replace=False)
+        t0_list = itemgetter(*shuffled_idx)(t0_list_base)
+        t1_list = itemgetter(*shuffled_idx)(t1_list_base)
+        perf_list = itemgetter(*shuffled_idx)(perf_list_base)
+        reward_list = itemgetter(*shuffled_idx)(reward_list_base)
+        duty_list = itemgetter(*shuffled_idx)(duty_list_base)
+        num_job_list = itemgetter(*shuffled_idx)(num_job_list_base)
+        # 2023-09-07
+        #
         bp_list = []
-        for t0, t1 in zip(t0_list, t1_list):
-            bp_list.append([t0, t1])
+        # for t0, t1 in zip(t0_list, t1_list):
+        for t0, t1, perf, reward, duty, num_job in zip(t0_list, t1_list, perf_list, reward_list, duty_list, num_job_list):
+            # bp_list.append([t0, t1])
+            bp_list.append([t0, t1, perf, reward, duty, num_job])
         return bp_list
-
+    
     def plot(self):
         x = self.df['bp_len'].to_numpy()
         y = self.df['perf'].to_numpy()

@@ -6,17 +6,14 @@ import seaborn as sns
 import math
 from pathlib import Path
 import argparse
-import pickle
 
-from jobset import get_list_job_info, Job, SelfJobSet, TraceJobSet, DrillJobSet
-from tsdb import EvalBusyPeriod
 from env_deadline_aware import EnvDeadlineAware
 from agent import Agent_AC, Agent_EDF, Agent_FCFS
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("-md", "--mode", choices=['Train', 'Test'], default="Test")  # modeを指定
+    parser.add_argument("-md", "--mode", choices=['Train', 'Test'], default="Test")  # アルゴリズムを指定
     parser.add_argument("-alg", "--algorithm", choices=['FCFS', 'EDF', 'AC'], default="EDF")  # アルゴリズムを指定
     parser.add_argument('-tr', '--isTraceJobSet', action="store_true")
     parser.add_argument('-dr', '--isDrillJobSet', action="store_true")
@@ -34,14 +31,12 @@ if __name__ == '__main__':
     parser.add_argument('-e','--tmax',type=int, default=500, help='tmax, episode length (default: 500)')  
     parser.add_argument('-s','--seed',type=int, default=0, help='seed (default: 0)')  
     parser.add_argument('-na','--nact',type=int, default=8, help='Nact (default: 8)')  
-    parser.add_argument('-m','--mu',type=float, default=10.0, help='mu, decay factor of reward (default: 10.0)')  # 報酬計算の減衰係数 exp(-mu*delay) gamma=1.0 (Sagisaka2022)
+    parser.add_argument('-m','--mu',type=float, default=1.0, help='mu, decay factor of reward (default: 1.0)')  # 報酬計算の減衰係数 exp(-mu*delay) gamma=1.0 (Sagisaka2022)
     parser.add_argument('-l','--lambda_',type=float, default=0.08, help='lambda, arrival rate per slot (default:0.08)')  # ポアソン過程のパラメータ（1スロットに到着するジョブ数を決める）
     parser.add_argument('-al','--alpha',type=float, default=2.0, help='alpha, defining the deadline by k-times of data size (default: 2.0)')  # 平均デッドライン長
     parser.add_argument('-bt','--beta',type=float, default=10.0, help='beta, defining the job size (default: 10.0')  # 平均ジョブサイズ
     parser.add_argument('-th','--perf_thresh',type=float, default=1.0, help='perf threshold for busy period as a drill (default: 1.0)')  
     parser.add_argument('-nbp','--num_bp',type=int, default=1000000, help='number of busy periods as a drill (default: all)')  
-    parser.add_argument('-nr','--nrep',type=int, default=100, help='number of repeat of one pattern before go to the next pattern in drill mode (default: 100)')  
-    parser.add_argument("-n", "--n_iter", type=int, default=1)  # 入力用Traceデータファイルのディレクトリ
     #
 
     args = parser.parse_args()
@@ -51,16 +46,19 @@ if __name__ == '__main__':
     isTraceJobSet = args.isTraceJobSet
     isDrillJobSet = args.isDrillJobSet
     isStream = args.isStream
+
     inputDir = args.inputDir
     inputFileName = args.inputDir+"/"+args.inputFileName
     print(f'# input file\'s name is {inputFileName}.')
+
     pjName = args.pjName
-    bpl_name = args.bplName
+    pbl_name = args.bplName
     jbs_name = args.jbsName
     if args.modelName == "same":
         modelName = pjName
     else:
         modelName = args.modelName
+    #
     num_episodes = args.num_episodes
     tmax = args.tmax
     lr = args.learning_rate
@@ -71,67 +69,40 @@ if __name__ == '__main__':
     lambda_ = args.lambda_
     alpha = args.alpha
     beta = args.beta
+
     perf_thresh = args.perf_thresh
     num_bp = args.num_bp
-    nrep = args.nrep
-    n_iter = args.n_iter
-    print(f"n_iter:{n_iter}")
 
-    if isDrillJobSet == True:
-        num_episodes = num_episodes * nrep
-    else:
-        num_episodes = num_episodes
-    pkl_dir_path = Path('pkl')
-    if not pkl_dir_path.exists():
-        pkl_dir_path.mkdir()
-    pkl_fname = pkl_dir_path.joinpath(f'jobset_{jbs_name}.pkl')
-    ofileName_base = "output/odata_"+bpl_name
-
-    # 最初にここでJobSetを作っておく
-    if isTraceJobSet == True: # 固定
-        jobset = TraceJobSet(f_name = inputFileName,
-                             n_iter = n_iter)
-    elif isDrillJobSet == True: # EDFではうまくできないBusy Periodを集めたパターン
-        eval_busyperiod = EvalBusyPeriod(ofileName_base = ofileName_base)
-        with open(pkl_fname, 'rb') as p:
-            loaded_jobset = pickle.load(p)
-        print(f"perf_thresh:{perf_thresh}")
-        list_bp = eval_busyperiod.from_csv(perf_thresh=perf_thresh,
-                                           sample_size = num_bp)
-        jobset = DrillJobSet(jobset = loaded_jobset,
-                                  list_bp = list_bp,
-                                  nrep = nrep)
-        jobset.show_drill_config()
-    else: # 乱数で生成する
-        jobset = SelfJobSet(tmax = tmax,
-                            seed = seed,
-                            isStream = isStream,
-                            lambda_ = lambda_,
-                            alpha = alpha,
-                            beta = beta)
-        with open(pkl_fname, 'wb') as p:
-            pickle.dump(jobset, p)
-
-    # jobset.show_config()
-    #
-
-    env = EnvDeadlineAware(seed = seed,
-                           jobset = jobset,
+    env = EnvDeadlineAware(isStream = isStream,
+                           isTraceJobSet = isTraceJobSet,
+                           isDrillJobSet = isDrillJobSet,
+                           f_name = inputFileName,
+                           tmax = tmax,
+                           seed = seed,
                            nact = nact,
-                           mu = mu)
-
+                           mu = mu,
+                           lambda_ = lambda_,
+                           alpha = alpha,
+                           beta = beta,
+                           perf_thresh = perf_thresh,
+                           num_bp = num_bp,
+                           bplist_name = pbl_name,
+                           jobset_name = jbs_name)
     if algorithm == "FCFS":
         agent = Agent_FCFS(env = env,
                            seed = seed,
-                           pjName = pjName)
+                           pjName = pjName,
+                           tmax = tmax)
     elif algorithm == "EDF":
         agent = Agent_EDF(env = env,
                           seed = seed,
-                          pjName = pjName)
+                          pjName = pjName,
+                          tmax = tmax)
     elif algorithm == "AC":
         agent = Agent_AC(env = env,
                          seed = seed,
                          pjName = pjName,
+                         tmax = tmax,
                          #
                          modelName = modelName,
                          lr = lr,

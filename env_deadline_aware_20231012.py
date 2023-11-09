@@ -21,9 +21,12 @@
 
 import math
 import copy
+import pickle
 from pathlib import Path
 
-from jobset import get_list_job_info, Job
+from jobset import get_list_job_info, Job, SelfJobSet, TraceJobSet, DrillJobSet
+from tsdb import EvalBusyPeriod
+
 
 def show_job_queue(job_queue):
     for item in job_queue:
@@ -107,25 +110,84 @@ def make_observation(list_jobs, time):
 
 class EnvDeadlineAware():
     def __init__(self,
-                 jobset,
+                 bplist_name,
+                 jobset_name,
+                 isStream = True,
+                 isTraceJobSet = False,
+                 isDrillJobSet = False,
+                 f_name = "data_jobset.txt",
+                 tmax = 300,
                  seed = 0,
                  nact = 8,
-                 mu = 1.0): 
+                 mu = 1.0,
+                 lambda_ = 0.08,
+                 beta = 10.0,
+                 alpha = 2.0,
+                 perf_thresh = 1.0,
+                 num_bp = 1000000,
+                 nrep = 10000): 
         """
         Args:
         num_bpは1000000以上の値にしておくと全てを選択する仕様
         nrepはDrillパターンをデフォルトで10000回行う
         Returns:
         """
+        self.output_dir_path = Path('output')
+        if not self.output_dir_path.exists():
+            self.output_dir_path.mkdir()
+        self.ofileName_base = "output/odata_"+bplist_name
 
+        self.pkl_dir_path = Path('pkl')
+        if not self.pkl_dir_path.exists():
+            self.pkl_dir_path.mkdir()
+        pkl_fname = self.pkl_dir_path.joinpath(f'jobset_{jobset_name}.pkl')
+        #
+        self.isStream = isStream
+        self.f_name = f_name
+        self.tmax = tmax # 時計の最大値
         self.time = 0 # 時計の初期化
         self.seed = seed # 乱数の種
-        self.mu = mu # 報酬計算のための減衰係数 exp(-mu*delay)
         self.nact = nact # ニューラルネットに状態として与えることができるジョブ数の最大値
+        self.mu = mu # 報酬計算のための減衰係数 exp(-mu*delay)
+        self.lambda_ = lambda_ # ポアソン過程のパラメータ（1スロットに到着するジョブ数を決める）
+        self.beta = beta # 平均ジョブサイズ
+        self.alpha = alpha # 平均デッドライン長
+        self.perf_thresh = perf_thresh
+        self.num_bp = num_bp
+        self.nrep = nrep
         #
         self.job_queue = [] # 現在、処理を待っているジョブの待ち行列
-        self.jobset = jobset
-        self.jobset.reset()
+        # 最初にここでJobSetを作っておく
+        if isTraceJobSet == True:
+            self.jobset = TraceJobSet(tmax = self.tmax,
+                                      f_name = self.f_name)
+        elif isDrillJobSet == True:
+            self.eval_busyperiod = EvalBusyPeriod(ofileName_base = self.ofileName_base)
+            with open(pkl_fname, 'rb') as p:
+                jobset = pickle.load(p)
+            print(f"perf_thresh:{self.perf_thresh}")
+            #
+            # 2023-0907
+            # list_bp = self.eval_busyperiod.from_csv(perf_thresh=self.perf_thresh)
+            list_bp = self.eval_busyperiod.from_csv(perf_thresh=self.perf_thresh,
+                                                    sample_size = num_bp)
+            # 2023-0907
+            #
+            # jobset.show_config()
+            # print(f"list_bp:{list_bp}")
+            self.jobset = DrillJobSet(jobset = jobset,
+                                      list_bp = list_bp,
+                                      nrep = nrep)
+            self.jobset.show_drill_config()
+        else:
+            self.jobset = SelfJobSet(tmax = self.tmax,
+                                 seed = self.seed,
+                                 isStream = self.isStream,
+                                 lambda_ = self.lambda_,
+                                 alpha = self.alpha,
+                                 beta = self.beta)
+            with open(pkl_fname, 'wb') as p:
+                pickle.dump(self.jobset, p)
         #
         self.time = 0
         self.tmax = self.jobset.get_tmax()
@@ -140,11 +202,7 @@ class EnvDeadlineAware():
             for i in range(self.nact-len(self.job_queue)):
                 nact_job_queue.append(dummy_job)
         observation, self.num_obs_elem, _, _ = make_observation(list_jobs = nact_job_queue, time = self.time)
-
-    def get_tmax(self):
-        return self.jobset.get_tmax()
-    
-
+        
     # def step(self,action):
     # # 1ステップ進めるときの更新処理．actionは選択されたジョブを指す．ジョブの到着処理もここで行う？
     #     return state, reward, done, 
@@ -314,9 +372,6 @@ class EnvDeadlineAware():
         #
         # JobSetをはじめに戻す
         self.jobset.reset()
-
-        # self.jobset.show_config()
-
         self.time = 0
         self.tmax = self.jobset.get_tmax()
         self.qlen = 0

@@ -1,7 +1,6 @@
 import numpy as np
 import random
 import csv
-import argparse
 
 from common.tools import decomment
 
@@ -26,12 +25,9 @@ class Job():
         """
         self.arrival_time = arrival_time # 到着時刻
         self.deadline_length = deadline_length # デッドラインの長さ
-        # # self.deadline = arrival_time+deadline_length # デッドライン時間（絶対時刻）
-        # # 2023-08-09
-        # self.deadline = arrival_time+deadline_length+1 # デッドライン時間（絶対時刻）に1を加える　必ず1スロットは待つため 2023-07-19の修正への対応
-        # 2023-11-01 デッドラインにはジョブサイズも加える
-        # self.deadline = arrival_time+job_size+deadline_length 
-        self.deadline = arrival_time+job_size+deadline_length+1 # デッドライン時間（絶対時刻）に1を加える　必ず1スロットは待つため 2023-07-19の修正への対応
+        # self.deadline = arrival_time+deadline_length # デッドライン時間（絶対時刻）
+        # 2023-08-09
+        self.deadline = arrival_time+deadline_length+1 # デッドライン時間（絶対時刻）に1を加える　必ず1スロットは待つため 2023-07-19の修正への対応
         self.job_size = job_size # ジョブサイズ（到着時のもの）
         self.job_size_remain = job_size # ジョブの残りのサイズ
 
@@ -63,12 +59,9 @@ class Job():
         """
         if served == True:
             self.job_size_remain -= 1.0
-            if self.job_size_remain <= 0:
-                delay = max(time-self.deadline,0.0)
-                done = True
-            else:
-                delay = 0
-                done = False
+        if self.job_size_remain <= 0:
+            delay = max(time-self.deadline,0.0)
+            done = True
         else:
             delay = 0
             done = False
@@ -112,14 +105,11 @@ class ArrivalProcess():
 class JobSet():
 
     def __init__(self,
-                 tmax=0):
+                 tmax):
         self.time = 0
         self.tmax = tmax
         self.qlen = 0
         self.calender = []
-
-    def get_tmax(self):
-        return self.tmax
 
     def step(self):
         """
@@ -165,6 +155,9 @@ class JobSet():
         self.time = 0
         self.calender = []
         return
+
+    def get_tmax(self):
+        return self.tmax
 
     def show_config(self):
         print("----------------------------")
@@ -249,17 +242,16 @@ class SelfJobSet(JobSet):
 
 class TraceJobSet(JobSet):
     def __init__(self,
-                 f_name,
-                 n_iter=1):
+                 tmax,
+                 f_name):
         """
         指定されたファイルからジョブのパターンを読み込む
         Args:
         Returns:
         """
         #
-        super().__init__()
+        super().__init__(tmax = tmax)
         self.f_name = f_name
-        self.n_iter = n_iter
         self.configure()
        
     def configure(self):
@@ -270,15 +262,7 @@ class TraceJobSet(JobSet):
         # # time, job_size, deadline_length
         # 0,2,3
         # ...
-        self.tmax = 0
-        with open(self.f_name) as f:
-            reader = csv.reader(decomment(f))
-            for row in reader:
-                time = int(row[0])
-                if time > self.tmax:
-                    self.tmax = time
-        self.calender = []
-        for t in range(self.tmax+1):
+        for t in range(self.tmax):
             self.calender.append([])
         with open(self.f_name) as f:
             reader = csv.reader(decomment(f))
@@ -286,42 +270,11 @@ class TraceJobSet(JobSet):
                 time = int(row[0])
                 job_size = int(row[1])
                 deadline_length = int(row[2])
+                # print(row[0],row[1],row[2])
                 job = Job(arrival_time = time,
                           deadline_length = deadline_length,
                           job_size = job_size)
                 self.calender[time].append(job)
-        #
-        isFirst = True
-        time = 0
-        self.qlen = 0
-        self.bp_len = 0
-        while time <= self.tmax:
-            list_arriving_jobs = self.calender[time]
-            if len(list_arriving_jobs) != 0 and isFirst == True:
-                isFirst = False
-            if isFirst == False:
-                arriving_job_size,_ = get_list_job_info(list_arriving_jobs)
-                self.qlen += arriving_job_size-1
-                self.qlen = max(self.qlen,0)
-                if (self.qlen == 0) :
-                    self.bp_len = time+1
-                    self.bp_len += 1
-                    break
-            time += 1
-        self.bp_len += (time+1+self.qlen)
-        #
-        for t in range(self.bp_len*self.n_iter):
-            self.calender.append([])
-        for i in range(self.n_iter):
-            for time in range(self.tmax+1):
-                list_of_arriving_jobs = []
-                for job in self.calender[time]:
-                    job_shift = Job(arrival_time=time+self.bp_len*(i+1),
-                                    deadline_length=job.deadline_length,
-                                    job_size=job.job_size)
-                    list_of_arriving_jobs.append(job_shift)
-                self.calender[time+self.bp_len*(i+1)] = list_of_arriving_jobs
-        self.tmax += self.bp_len*self.n_iter
         return
 
     def reset(self):
@@ -341,9 +294,12 @@ class DrillJobSet(JobSet):
                  list_bp,
                  nrep=10000):
         self.jobset_dict = []
+        self.jobset_perf_dict = []
         for i, bp in enumerate(list_bp):
-            t0, t1 = bp[0], bp[1]
+            # columns=['time_start', 'time_end', 'perf', 'reward', 'duty','num_job'])
+            t0, t1, perf, reward, duty, num_job = bp[0], bp[1], bp[2], bp[3], bp[4], bp[5]
             self.jobset_dict.append(jobset.sample(t0,t1))
+            self.jobset_perf_dict.append([perf,reward,duty,num_job])
         # idx = random.randrange(len(self.jobset_dict)) # 問題集からランダムにジョブセットを選ぶ
         # self.configure(idx = idx)
         self.idx = random.randrange(len(self.jobset_dict)) # 問題集からランダムにジョブセットを選ぶ
@@ -361,6 +317,9 @@ class DrillJobSet(JobSet):
         """
         #
         jobset = self.jobset_dict[idx]
+        jobset_perf = self.jobset_perf_dict[idx]
+        # #self.jobset_perf_dict.append([perf,reward,duty,num_job])
+        [perf,reward,duty,num_job] = jobset_perf
         tmax = jobset.get_tmax()
         calender = jobset.get_calender()
         super().__init__(tmax = tmax)
@@ -385,25 +344,3 @@ class DrillJobSet(JobSet):
         # for i in range(num_jobsets):
         #     self.jobset_dict[i].show_conifg()
 
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-tr', '--isTraceJobSet', action="store_true")
-    parser.add_argument("-id", "--inputDir", type=str, default="input")  # 入力用Traceデータファイルのディレクトリ
-    parser.add_argument('-i','--inputFileName',default="data_jobset.txt", help='File name of Input JobSet data (default: data_jobset.txt)')  
-    parser.add_argument('-e','--tmax',type=int, default=15, help='tmax, episode length (default: 15)')  
-    parser.add_argument("-n", "--n_iter", type=int, default=1)  # 入力用Traceデータファイルのディレクトリ
-
-    args = parser.parse_args()
-    isTraceJobSet = args.isTraceJobSet
-    inputDir = args.inputDir
-    inputFileName = args.inputDir+"/"+args.inputFileName
-    print(f'# input file\'s name is {inputFileName}.')
-    tmax = args.tmax
-    n_iter = args.n_iter
-    print(f"n_iter:{n_iter}")
-    jobset = TraceJobSet(f_name = inputFileName,
-                         n_iter = n_iter)
-        
-    jobset.show_config()
